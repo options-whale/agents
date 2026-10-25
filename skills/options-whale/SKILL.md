@@ -20,10 +20,15 @@ https://www.options-whale.com/api/mcp
 Transport: Streamable HTTP. No API key, account login, broker access, or order
 execution is available through this endpoint.
 
-Before relying on the integration, run:
+From an Options Whale `agents` repository checkout, verify the integration before
+relying on it:
 
 ```sh
-npx --package @options-whale/agents options-whale-agents doctor
+git clone https://github.com/options-whale/agents.git
+cd agents
+npm install
+npm run build
+npx options-whale-agents doctor
 ```
 
 The production catalog and integration instructions are:
