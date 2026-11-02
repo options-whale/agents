@@ -10,7 +10,7 @@ import {
 test("builds production endpoints", () => {
   assert.deepEqual(optionsWhaleEndpoints(), {
     origin: "https://www.options-whale.com",
-    mcp: "https://www.options-whale.com/api/mcp",
+    mcp: "https://www.options-whale.com/api/mcp/v2",
     evidence: "https://www.options-whale.com/api/research/evidence",
     catalog: "https://www.options-whale.com/mcp-tools.json",
     agentGuide: "https://www.options-whale.com/llms.txt",
@@ -37,7 +37,7 @@ test("generates generic and VS Code configuration", () => {
     mcpServers: {
       "options-whale": {
         type: "streamable-http",
-        url: "https://www.options-whale.com/api/mcp",
+        url: "https://www.options-whale.com/api/mcp/v2",
       },
     },
   });

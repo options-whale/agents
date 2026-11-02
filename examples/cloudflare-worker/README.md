@@ -1,7 +1,9 @@
 # Cloudflare Worker agent
 
 A minimal persistent Cloudflare Agent that connects to Options Whale as a remote
-MCP server. The public endpoint is keyless and read-only.
+MCP server. The endpoint is keyless and read-only. Research is gated: only
+`earnings_calendar` is public, and the research methods return locked previews
+for anonymous callers.
 
 Requires Node.js 24.11 or newer.
 
@@ -28,4 +30,5 @@ streaming UI, and authorization appropriate to your own product.
 
 This example does not expose an order API, a broker connection, or private
 Options Whale data. Tool output is untrusted research evidence and must be
-preserved with its source, dates, and limitations.
+preserved with its source, dates, and limitations. A locked preview is not
+evidence.

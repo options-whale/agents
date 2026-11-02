@@ -52,7 +52,7 @@ export function optionsWhaleEndpoints(
   const normalizedOrigin = resolveOptionsWhaleOrigin(origin);
   return {
     origin: normalizedOrigin,
-    mcp: `${normalizedOrigin}/api/mcp`,
+    mcp: `${normalizedOrigin}/api/mcp/v2`,
     evidence: `${normalizedOrigin}/api/research/evidence`,
     catalog: `${normalizedOrigin}/mcp-tools.json`,
     agentGuide: `${normalizedOrigin}/llms.txt`,

@@ -64,17 +64,19 @@ function help(): void {
   process.stdout.write(`Options Whale agents
 
 Usage:
-  options-whale-agents doctor [--json] [--origin URL] [--timeout MS]
+  options-whale-agents doctor [--json] [--origin URL] [--timeout MS] [--no-probe]
   options-whale-agents config [--client generic|cursor|muse|vscode] [--origin URL] [--compact]
   options-whale-agents catalog [--json] [--origin URL]
-  options-whale-agents evidence [SYMBOL ...] [--from YYYY-MM-DD --to YYYY-MM-DD] [--origin URL] [--json]
+  options-whale-agents evidence [SYMBOL ...] [--from YYYY-MM-DD --to YYYY-MM-DD] [--origin URL]
 
 Examples:
   options-whale-agents doctor
   options-whale-agents config --client cursor
   options-whale-agents evidence AAPL MSFT
 
-The public Options Whale surface is read-only. No API key is required.
+The MCP catalog and earnings calendar are public and read-only. Other research
+tools currently return locked previews to anonymous callers, and the evidence
+API returns HTTP 401 research_locked. No API key or account login is supported.
 `);
 }
 
@@ -92,6 +94,7 @@ async function doctor(args: ParsedArgs): Promise<number> {
   const report = await diagnoseOptionsWhaleMcp({
     origin: flagString(args, "origin"),
     timeoutMs: timeoutOption(args),
+    probeResearch: !hasFlag(args, "no-probe"),
   });
 
   if (hasFlag(args, "json")) {
@@ -108,6 +111,20 @@ async function doctor(args: ParsedArgs): Promise<number> {
       process.stdout.write(
         `Server: ${report.server.name} ${report.server.version ?? ""} (${report.server.protocolVersion ?? "protocol unknown"})\n`,
       );
+    }
+    if (report.researchAccess === "locked") {
+      process.stdout.write(
+        "Research: locked for anonymous callers (earnings_calendar is public)\n",
+      );
+    } else if (report.researchAccess === "available") {
+      process.stdout.write("Research: available\n");
+    } else {
+      process.stdout.write(
+        `Research: ${hasFlag(args, "no-probe") ? "not probed" : "unknown"}\n`,
+      );
+    }
+    if (report.researchNote) {
+      process.stdout.write(`Note: ${report.researchNote}\n`);
     }
     process.stdout.write(
       `Latency: ${report.latencyMs} ms\nResult: ${report.status}\n`,

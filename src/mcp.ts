@@ -5,7 +5,7 @@ import {
   optionsWhaleEndpoints,
 } from "./endpoints.js";
 
-export const TOOLKIT_VERSION = "0.1.0";
+export const TOOLKIT_VERSION = "0.2.0";
 
 export const REQUIRED_TOOLS = [
   "earnings_calendar",
@@ -29,6 +29,14 @@ export interface OpenMcpOptions {
   signal?: AbortSignal;
 }
 
+export interface DoctorOptions extends OpenMcpOptions {
+  /**
+   * Call the public calendar and one research tool to report whether research
+   * evidence is available to this caller. Defaults to true.
+   */
+  probeResearch?: boolean;
+}
+
 export interface CatalogSnapshot {
   tools: Array<{ name: string; readOnly: boolean }>;
   prompts: Array<{ name: string }>;
@@ -41,6 +49,12 @@ export interface DoctorCheck {
   detail: string;
 }
 
+/**
+ * `locked` is the expected state for anonymous callers: the MCP server
+ * discovers the full research catalog but returns locked previews.
+ */
+export type ResearchAccess = "available" | "locked" | "unknown";
+
 export interface DoctorReport {
   status: "ready" | "unhealthy";
   endpoint: string;
@@ -52,7 +66,50 @@ export interface DoctorReport {
   };
   catalog?: CatalogSnapshot;
   checks: DoctorCheck[];
+  researchAccess: ResearchAccess;
+  researchNote?: string;
+  calendarEvents?: number;
   error?: string;
+}
+
+interface ToolResultLike {
+  structuredContent?: unknown;
+  content?: Array<{ type: string; text?: string }>;
+  isError?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toolPayload(result: ToolResultLike): unknown {
+  if (result.structuredContent !== undefined) return result.structuredContent;
+  const text = result.content?.find(
+    (item) => item.type === "text" && typeof item.text === "string",
+  )?.text;
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Classify a research tool result. The server returns
+ * `{ locked: true, code: "research_locked" }` instead of evidence for
+ * anonymous callers; anything else that parsed is treated as available.
+ */
+export function classifyResearchAccess(payload: unknown): ResearchAccess {
+  if (!isRecord(payload)) return "unknown";
+  if (payload.locked === true || payload.code === "research_locked") {
+    return "locked";
+  }
+  return "available";
 }
 
 export function assessCatalog(catalog: CatalogSnapshot): DoctorCheck[] {
@@ -95,10 +152,19 @@ export async function openOptionsWhaleMcp(
   const endpoint = optionsWhaleEndpoints(
     options.origin ?? DEFAULT_OPTIONS_WHALE_ORIGIN,
   ).mcp;
-  const signal =
-    options.signal ?? AbortSignal.timeout(options.timeoutMs ?? 20_000);
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const baseFetch = globalThis.fetch;
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: { signal },
+    // A fresh timeout per request: a connection-wide AbortSignal.timeout()
+    // would abort every call made 20 seconds after the connection opened.
+    fetch: (input, init) => {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const signal = init?.signal
+        ? AbortSignal.any([init.signal, timeoutSignal])
+        : timeoutSignal;
+      return baseFetch(input, { ...init, signal });
+    },
+    requestInit: options.signal ? { signal: options.signal } : undefined,
   });
   const client = new Client(
     { name: "options-whale-agents", version: TOOLKIT_VERSION },
@@ -110,7 +176,7 @@ export async function openOptionsWhaleMcp(
 }
 
 export async function diagnoseOptionsWhaleMcp(
-  options: OpenMcpOptions = {},
+  options: DoctorOptions = {},
 ): Promise<DoctorReport> {
   const started = performance.now();
   let connection: McpConnection | undefined;
@@ -136,7 +202,7 @@ export async function diagnoseOptionsWhaleMcp(
         uri: resource.uri,
       })),
     };
-    const checks = [
+    const checks: DoctorCheck[] = [
       {
         name: "mcp-handshake",
         ok: true,
@@ -144,6 +210,78 @@ export async function diagnoseOptionsWhaleMcp(
       },
       ...assessCatalog(catalog),
     ];
+
+    let researchAccess: ResearchAccess = "unknown";
+    let researchNote: string | undefined;
+    let calendarEvents: number | undefined;
+
+    if (options.probeResearch !== false) {
+      let probeTicker: string | undefined;
+      try {
+        const calendarResult = (await connection.client.callTool({
+          name: "earnings_calendar",
+          arguments: {},
+        })) as ToolResultLike;
+        const calendar = toolPayload(calendarResult);
+        const events =
+          isRecord(calendar) && Array.isArray(calendar.events)
+            ? calendar.events
+            : undefined;
+        if (events) {
+          calendarEvents = events.length;
+          checks.push({
+            name: "public-calendar",
+            ok: true,
+            detail: `earnings_calendar returned ${events.length} event${
+              events.length === 1 ? "" : "s"
+            }.`,
+          });
+          const first = events[0];
+          if (isRecord(first) && typeof first.ticker === "string") {
+            probeTicker = first.ticker;
+          }
+        } else {
+          checks.push({
+            name: "public-calendar",
+            ok: false,
+            detail: "earnings_calendar did not return an events array.",
+          });
+        }
+      } catch (error) {
+        checks.push({
+          name: "public-calendar",
+          ok: false,
+          detail: `earnings_calendar failed: ${errorMessage(error)}`,
+        });
+      }
+
+      if (calendarEvents !== undefined) {
+        const ticker = probeTicker ?? "AAPL";
+        try {
+          const briefResult = (await connection.client.callTool({
+            name: "earnings_brief",
+            arguments: { ticker },
+          })) as ToolResultLike;
+          const brief = toolPayload(briefResult);
+          if (briefResult.isError) {
+            researchNote = `earnings_brief returned an error for ${ticker}.`;
+          } else {
+            researchAccess = classifyResearchAccess(brief);
+            if (researchAccess === "locked") {
+              const note =
+                isRecord(brief) && typeof brief.note === "string"
+                  ? brief.note
+                  : undefined;
+              researchNote =
+                note ??
+                "Research tools return locked previews for anonymous callers.";
+            }
+          }
+        } catch (error) {
+          researchNote = `Research probe failed: ${errorMessage(error)}`;
+        }
+      }
+    }
 
     return {
       status: checks.every((check) => check.ok) ? "ready" : "unhealthy",
@@ -156,6 +294,9 @@ export async function diagnoseOptionsWhaleMcp(
       },
       catalog,
       checks,
+      researchAccess,
+      researchNote,
+      calendarEvents,
     };
   } catch (error) {
     return {
@@ -166,10 +307,11 @@ export async function diagnoseOptionsWhaleMcp(
         {
           name: "mcp-handshake",
           ok: false,
-          detail: error instanceof Error ? error.message : String(error),
+          detail: errorMessage(error),
         },
       ],
-      error: error instanceof Error ? error.message : String(error),
+      researchAccess: "unknown",
+      error: errorMessage(error),
     };
   } finally {
     if (connection) await connection.client.close().catch(() => undefined);

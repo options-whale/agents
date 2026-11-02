@@ -5,6 +5,12 @@ import {
 
 const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_SYMBOLS = 4;
+const MAX_RANGE_DAYS = 35;
+const DAY_MS = 86_400_000;
+
+export const LOCKED_RESEARCH_MESSAGE =
+  "Options Whale research is locked for anonymous callers. Full evidence requires a paid Research account inside the earnings window; this toolkit does not authenticate accounts. See https://www.options-whale.com/research/brief.";
 
 export interface EvidenceQuery {
   symbols?: readonly string[];
@@ -65,11 +71,25 @@ export class OptionsWhaleRequestError extends Error {
   }
 }
 
+/**
+ * Raised when the evidence API answers `401 research_locked`. This is a
+ * product gate, not a transient failure: retrying without an authenticated
+ * account cannot succeed.
+ */
+export class OptionsWhaleLockedError extends OptionsWhaleRequestError {
+  readonly code = "research_locked";
+
+  constructor(url: string, message: string = LOCKED_RESEARCH_MESSAGE) {
+    super(message, 401, url);
+    this.name = "OptionsWhaleLockedError";
+  }
+}
+
 export function normalizeSymbols(symbols: readonly string[]): string[] {
-  if (symbols.length > 4) {
+  if (symbols.length > MAX_SYMBOLS) {
     throw new Error("The public API accepts at most four symbols.");
   }
-  return symbols.map((value) => {
+  const normalized = symbols.map((value) => {
     const symbol = value.trim().toUpperCase();
     if (!SYMBOL_PATTERN.test(symbol)) {
       throw new Error(
@@ -78,12 +98,24 @@ export function normalizeSymbols(symbols: readonly string[]): string[] {
     }
     return symbol;
   });
+  const seen = new Set<string>();
+  for (const symbol of normalized) {
+    if (seen.has(symbol)) {
+      throw new Error(`Duplicate ticker "${symbol}". Symbols must be unique.`);
+    }
+    seen.add(symbol);
+  }
+  return normalized;
 }
 
 function validDate(value: string): boolean {
   if (!DATE_PATTERN.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function buildEvidenceUrl(
@@ -101,6 +133,15 @@ export function buildEvidenceUrl(
     if (query.from > query.to) {
       throw new Error("Evidence from must be on or before to.");
     }
+    const spanDays =
+      (Date.parse(`${query.to}T00:00:00.000Z`) -
+        Date.parse(`${query.from}T00:00:00.000Z`)) /
+      DAY_MS;
+    if (spanDays > MAX_RANGE_DAYS - 1) {
+      throw new Error(
+        `Evidence date ranges can span at most ${MAX_RANGE_DAYS} inclusive days.`,
+      );
+    }
   }
 
   const url = new URL(optionsWhaleEndpoints(origin).evidence);
@@ -112,15 +153,29 @@ export function buildEvidenceUrl(
 
 async function readJsonResponse<T>(response: Response, url: string): Promise<T> {
   const body = await response.text();
+  let parsed: unknown;
+  let hasJson = true;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    hasJson = false;
+  }
+  const record = isRecord(parsed) ? parsed : undefined;
+
   if (!response.ok) {
-    let detail = body.slice(0, 300).trim();
-    try {
-      const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
-      const message = parsed.error ?? parsed.message;
-      if (typeof message === "string") detail = message;
-    } catch {
-      // Keep the bounded text response.
+    if (
+      response.status === 401 &&
+      (record?.locked === true || record?.code === "research_locked")
+    ) {
+      const note = typeof record?.note === "string" ? record.note : undefined;
+      throw new OptionsWhaleLockedError(
+        url,
+        note ? `${LOCKED_RESEARCH_MESSAGE} ${note}` : LOCKED_RESEARCH_MESSAGE,
+      );
     }
+    let detail = body.slice(0, 300).trim();
+    const message = record?.error ?? record?.message;
+    if (typeof message === "string") detail = message;
     throw new OptionsWhaleRequestError(
       `Options Whale returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
       response.status,
@@ -128,17 +183,21 @@ async function readJsonResponse<T>(response: Response, url: string): Promise<T> 
     );
   }
 
-  try {
-    return JSON.parse(body) as T;
-  } catch {
+  if (!hasJson) {
     throw new OptionsWhaleRequestError(
       "Options Whale returned a non-JSON response.",
       response.status,
       url,
     );
   }
+  return parsed as T;
 }
 
+/**
+ * Read the evidence API. Anonymous requests currently return
+ * `research_locked`; those throw {@link OptionsWhaleLockedError} rather than a
+ * generic HTTP error. The toolkit does not implement account authentication.
+ */
 export async function fetchEvidence(
   options: FetchEvidenceOptions = {},
 ): Promise<EvidenceResponse> {

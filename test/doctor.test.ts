@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { REQUIRED_TOOLS, assessCatalog } from "../src/index.js";
+import {
+  REQUIRED_TOOLS,
+  TOOLKIT_VERSION,
+  assessCatalog,
+  classifyResearchAccess,
+} from "../src/index.js";
 
 test("accepts the complete read-only catalog", () => {
   const checks = assessCatalog({
@@ -22,4 +28,22 @@ test("reports missing and non-read-only tools", () => {
   });
   const failed = checks.filter((check) => !check.ok).map((check) => check.name);
   assert.deepEqual(failed, ["required-tools", "read-only", "agent-guidance"]);
+});
+
+test("classifies locked and available research payloads", () => {
+  assert.equal(
+    classifyResearchAccess({ locked: true, code: "research_locked" }),
+    "locked",
+  );
+  assert.equal(classifyResearchAccess({ locked: true }), "locked");
+  assert.equal(classifyResearchAccess({ ticker: "AAPL", event: {} }), "available");
+  assert.equal(classifyResearchAccess(undefined), "unknown");
+  assert.equal(classifyResearchAccess("not json"), "unknown");
+});
+
+test("toolkit version matches the package manifest", () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { version: string };
+  assert.equal(TOOLKIT_VERSION, manifest.version);
 });

@@ -1,7 +1,7 @@
 import { Agent, callable, routeAgentRequest } from "agents";
 
 const SERVER_ID = "options-whale";
-const SERVER_URL = "https://www.options-whale.com/api/mcp";
+const SERVER_URL = "https://www.options-whale.com/api/mcp/v2";
 const TICKER_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 
 function ticker(value: string): string {
@@ -21,6 +21,7 @@ export class OptionsWhaleAgent extends Agent {
   async onStart(): Promise<void> {
     const result = await this.addMcpServer("Options Whale", SERVER_URL, {
       id: SERVER_ID,
+      transport: { type: "streamable-http" },
     });
     if (result.state === "authenticating") {
       throw new Error("The public Options Whale MCP endpoint requires no authentication.");

@@ -1,9 +1,20 @@
 {
   "name": "@options-whale/agents",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Developer toolkit for connecting AI agents to Options Whale earnings research.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/options-whale/agents.git"
+  },
+  "homepage": "https://www.options-whale.com/integrations/mcp",
+  "bugs": {
+    "url": "https://github.com/options-whale/agents/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -20,6 +31,7 @@
     "dist",
     "skills",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [

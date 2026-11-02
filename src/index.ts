@@ -13,6 +13,8 @@ export {
 } from "./config.js";
 export {
   OptionsWhaleRequestError,
+  OptionsWhaleLockedError,
+  LOCKED_RESEARCH_MESSAGE,
   buildEvidenceUrl,
   fetchEvidence,
   fetchMcpCatalog,
@@ -26,11 +28,14 @@ export {
   REQUIRED_TOOLS,
   TOOLKIT_VERSION,
   assessCatalog,
+  classifyResearchAccess,
   diagnoseOptionsWhaleMcp,
   openOptionsWhaleMcp,
   type CatalogSnapshot,
   type DoctorCheck,
+  type DoctorOptions,
   type DoctorReport,
   type McpConnection,
   type OpenMcpOptions,
+  type ResearchAccess,
 } from "./mcp.js";
